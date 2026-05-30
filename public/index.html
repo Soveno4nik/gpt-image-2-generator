@@ -41,37 +41,61 @@
                     <input type="password" id="api-key" placeholder="Bearer sk-..." class="w-full bg-[#0d1117] border border-[#30363d] rounded p-2 text-white text-sm">
                 </div>
 
-                <!-- ДОБАВЛЕН РАЗДЕЛ НАСТРОЕК ЛОАДЕРА (ОЖИДАНИЯ С ГИФКОЙ AMONG US ПО ДЕФОЛТУ) -->
+                <!-- ГАЛЕРЕЯ ГИФОК-ЛОАДЕРОВ (АНИМАЦИЯ ОЖИДАНИЯ) -->
                 <hr class="border-[#30363d] my-4">
                 <div class="space-y-3">
-                    <h4 class="text-xs font-bold uppercase tracking-wider text-indigo-400">Анимация ожидания (GIF)</h4>
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-indigo-400">Галерея анимаций ожидания (GIF)</h4>
+
+                    <!-- Выбор режима работы гифки -->
                     <div>
-                        <label class="block text-xs font-semibold text-gray-400 mb-1">Тип источника GIF</label>
-                        <div class="flex gap-4 text-xs mb-2">
+                        <label class="block text-xs font-semibold text-gray-400 mb-1.5">Режим работы гифки:</label>
+                        <div class="flex gap-4 text-xs">
                             <label class="flex items-center gap-1.5 cursor-pointer">
-                                <input type="radio" name="loader-mode" value="url" id="loader-mode-url" checked onchange="toggleLoaderInputs()"> Ссылка (URL)
+                                <input type="radio" name="loader-use-mode" value="selected" id="loader-use-selected" checked onchange="toggleLoaderUseMode()"> Выбранная из галереи
                             </label>
                             <label class="flex items-center gap-1.5 cursor-pointer">
-                                <input type="radio" name="loader-mode" value="file" id="loader-mode-file" onchange="toggleLoaderInputs()"> Свой файл (GIF)
+                                <input type="radio" name="loader-use-mode" value="random" id="loader-use-random" onchange="toggleLoaderUseMode()"> Рандомная из галереи
                             </label>
                         </div>
                     </div>
-                    <!-- Блок ввода по ссылке (URL) -->
-                    <div id="loader-url-container">
-                        <label class="block text-[10px] text-gray-400 mb-1">Ссылка на GIF изображение</label>
-                        <div class="flex gap-2">
-                            <input type="text" id="loader-url" placeholder="https://..." class="flex-1 bg-[#0d1117] border border-[#30363d] rounded p-2 text-white text-xs">
-                            <button onclick="resetLoaderUrl()" class="bg-zinc-800 hover:bg-zinc-700 text-white px-2.5 py-1 rounded text-xs transition font-semibold" title="Сбросить на стандартного космонавта Among Us">Дефолт</button>
+
+                    <!-- Форма добавления нового лоадера -->
+                    <div class="bg-[#0d1117] border border-[#30363d] rounded p-2.5 space-y-2">
+                        <span class="text-[10px] font-bold text-gray-400 block uppercase">Добавить новую гифку</span>
+                        <div class="flex gap-4 text-[11px] mb-1">
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="radio" name="add-loader-type" value="url" id="add-loader-url-opt" checked onchange="toggleAddLoaderInputs()"> По ссылке
+                            </label>
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="radio" name="add-loader-type" value="file" id="add-loader-file-opt" onchange="toggleAddLoaderInputs()"> Файлом
+                            </label>
+                        </div>
+
+                        <div class="space-y-2">
+                            <input type="text" id="new-loader-name" placeholder="Название гифки (необязательно)" class="w-full bg-[#161b22] border border-[#30363d] rounded p-1.5 text-white text-xs">
+
+                            <!-- Ввод Ссылки -->
+                            <div id="add-loader-url-container">
+                                <input type="text" id="new-loader-url" placeholder="https://example.com/loader.gif" class="w-full bg-[#161b22] border border-[#30363d] rounded p-1.5 text-white text-xs">
+                            </div>
+
+                            <!-- Ввод Файла -->
+                            <div id="add-loader-file-container" class="hidden">
+                                <input type="file" id="new-loader-file" accept="image/gif" class="w-full bg-[#161b22] border border-[#30363d] rounded p-1 text-xs text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-bold file:bg-zinc-800 file:text-white hover:file:bg-zinc-700">
+                            </div>
+
+                            <button onclick="addNewLoader()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-1.5 rounded text-xs font-bold transition">
+                                <i class="fa-solid fa-plus mr-1"></i> Добавить в галерею
+                            </button>
                         </div>
                     </div>
-                    <!-- Блок загрузки локального GIF-файла на бэкенд -->
-                    <div id="loader-file-container" class="hidden">
-                        <label class="block text-[10px] text-gray-400 mb-1">Загрузить GIF на сервер</label>
-                        <div class="flex gap-2 items-center">
-                            <input type="file" id="loader-file" accept="image/gif" class="flex-1 bg-[#0d1117] border border-[#30363d] rounded p-1 text-xs text-gray-400 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[10px] file:font-bold file:bg-zinc-800 file:text-white hover:file:bg-zinc-700">
-                            <button onclick="uploadCustomLoader()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded text-xs font-bold transition">Загрузить</button>
+
+                    <!-- Список доступных лоадеров -->
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1.5">Список гифок в галерее:</label>
+                        <div id="loaders-list-container" class="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto pr-1">
+                            <!-- Заполняется динамически через JS -->
                         </div>
-                        <p class="text-[9px] text-gray-500 mt-1">Файл сохранится на сервере как /custom_loader.gif</p>
                     </div>
                 </div>
 
@@ -195,11 +219,14 @@
                                 </div>
                             </div>
 
-                            <input type="file" id="edit-image" accept="image/*" multiple class="w-full bg-[#0d1117] border border-[#30363d] rounded p-2 text-sm text-gray-400 file:mr-4 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-zinc-800 file:text-white hover:file:bg-zinc-700">*
+                            <input type="file" id="edit-image" accept="image/*" multiple class="w-full bg-[#0d1117] border border-[#30363d] rounded p-2 text-sm text-gray-400 file:mr-4 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-zinc-800 file:text-white hover:file:bg-zinc-700">
 
-                            <!-- ИСПРАВЛЕН ВЫВОД ПОРЯДКА ФАЙЛОВ: Контейнер для отображения точного списка загруженных локальных файлов -->
+                            <!-- Отображение точного списка загруженных локальных файлов -->
                             <div id="local-files-display" class="hidden mt-2 p-2 bg-[#0d1117] border border-[#30363d] rounded flex flex-col gap-1.5">
-                                <span class="text-xs font-bold text-gray-400">Локальные файлы (в порядке загрузки):</span>
+                                <div class="flex justify-between items-center border-b border-[#30363d]/50 pb-1">
+                                    <span class="text-xs font-bold text-gray-400">Локальные файлы (в порядке загрузки):</span>
+                                    <button onclick="clearLocalFiles()" class="text-red-400 hover:text-red-300 text-[10px] uppercase font-bold">Очистить все</button>
+                                </div>
                                 <div id="local-files-list" class="space-y-1 max-h-24 overflow-y-auto text-xs text-gray-300">
                                     <!-- Элементы выводятся через JS -->
                                 </div>
@@ -231,16 +258,24 @@
                         </button>
                     </div>
 
-                    <!-- TAB 3: GALLERY -->
-                    <div id="gallery-tab" class="space-y-4 hidden">
-                        <div class="flex justify-between items-center mb-1">
-                            <h3 class="text-sm font-bold text-white flex items-center gap-2">
-                                <i class="fa-solid fa-images text-indigo-400"></i> Сохраненные изображения
-                            </h3>
-                            <span id="gallery-counter" class="text-[10px] bg-zinc-800 text-gray-400 px-2 py-0.5 rounded font-bold">Всего: 0</span>
+                    <!-- TAB 3: GALLERY (С ПАГИНАЦИЕЙ) -->
+                    <div id="gallery-tab" class="space-y-4 hidden flex flex-col justify-between">
+                        <div class="space-y-3">
+                            <div class="flex justify-between items-center mb-1">
+                                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                                    <i class="fa-solid fa-images text-indigo-400"></i> Сохраненные изображения
+                                </h3>
+                                <span id="gallery-counter" class="text-[10px] bg-zinc-800 text-gray-400 px-2 py-0.5 rounded font-bold">Всего: 0</span>
+                            </div>
+                            <!-- Высота изменена с max-h-[500px] на max-h-[340px] для фиксации пагинации на экране -->
+                            <div id="gallery" class="grid grid-cols-2 gap-3 max-h-[340px] overflow-y-auto pr-1">
+                                <!-- Заполняется динамически -->
+                            </div>
                         </div>
-                        <div id="gallery" class="grid grid-cols-2 gap-3 max-h-[500px] overflow-y-auto pr-1">
-                            <!-- Заполняется динамически -->
+
+                        <!-- Блок пагинации всегда прижат к низу и не уходит за экран -->
+                        <div id="gallery-pagination" class="flex justify-center items-center gap-2 pt-3 border-t border-[#30363d]">
+                            <!-- Кнопки пагинации генерируются через JS -->
                         </div>
                     </div>
 
@@ -256,7 +291,7 @@
 
                 <!-- Лоадер -->
                 <div id="loader" class="hidden absolute inset-0 bg-black/85 z-10 flex flex-col items-center justify-center gap-2 rounded-lg pointer-events-auto">
-                    <!-- ИСПРАВЛЕНА АНИМАЦИЯ ОЖИДАНИЯ: Встроенный тег <img> с дефолтной гифкой Amogus -->
+                    <!-- GIF устанавливается динамически через JS -->
                     <img id="loader-gif" src="https://media1.tenor.com/m/-YlzaY7PXb4AAAAd/among-us-amogus.gif" class="h-28 w-28 object-contain rounded mb-2">
                     <span class="text-sm font-semibold text-indigo-300">Подождите, gpt-image-2 генерирует изображение...</span>
 

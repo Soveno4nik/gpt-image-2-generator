@@ -36,12 +36,29 @@ function logger(level, message, meta = null) {
 
 const uploadsDir = path.join(__dirname, 'uploads');
 const savedImagesDir = path.join(__dirname, 'saved_images');
-[uploadsDir, savedImagesDir].forEach(dir => {
+const loadersDir = path.join(__dirname, 'public', 'loaders');
+const loadersManifestPath = path.join(loadersDir, 'loaders.json');
+
+[uploadsDir, savedImagesDir, loadersDir].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
         logger('info', `Создана рабочая директория: ${dir}`);
     }
 });
+
+// Инициализация дефолтного списка гифок-лоадеров
+const defaultLoaders = [
+    {
+        id: 'default-amogus',
+        name: 'Among Us Astronaut (Дефолт)',
+        type: 'url',
+        url: 'https://media1.tenor.com/m/-YlzaY7PXb4AAAAd/among-us-amogus.gif'
+    }
+];
+
+if (!fs.existsSync(loadersManifestPath)) {
+    fs.writeFileSync(loadersManifestPath, JSON.stringify(defaultLoaders, null, 2), 'utf-8');
+}
 
 const upload = multer({ dest: 'uploads/' });
 
@@ -50,6 +67,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 app.use(express.static('public'));
 app.use('/saved_images', express.static(savedImagesDir));
+app.use('/loaders', express.static(loadersDir));
 
 const getAuthHeaders = (req) => {
     const token = req.headers['x-api-key'] || process.env.OPENAI_API_KEY;
@@ -93,8 +111,7 @@ async function autoSaveImage(imageUrl, prompt, params) {
         else if (imageUrl.includes('.jpg') || imageUrl.includes('.jpeg')) ext = 'jpg';
     }
 
-    // Рандомизатор имен файлов
-    const filename = `img_${Date.now()}_${Math.floor(Math.random() *10000)}.${ext}`;
+    const filename = `img_${Date.now()}_${Math.floor(Math.random() * 10000)}.${ext}`;
     const filepath = path.join(savedImagesDir, filename);
 
     fs.writeFileSync(filepath, buffer);
@@ -116,28 +133,135 @@ async function autoSaveImage(imageUrl, prompt, params) {
     return filename;
 }
 
-// ПРИЕМ И СОХРАНЕНИЕ КАСТОМНОГО GIF-ЛОАДЕРА НА СЕРВЕРЕ
-app.post('/api/upload-loader', upload.single('loaderGif'), (req, res) => {
+// ==========================================
+// API ЭНДПОИНТЫ ДЛЯ ГАЛЕРЕИ ГИФОК-ЛОАДЕРОВ
+// ==========================================
+
+// Получить список гифок
+app.get('/api/loaders', (req, res) => {
+    try {
+        if (fs.existsSync(loadersManifestPath)) {
+            res.json(JSON.parse(fs.readFileSync(loadersManifestPath, 'utf-8')));
+        } else {
+            res.json(defaultLoaders);
+        }
+    } catch (err) {
+        logger('error', 'Ошибка чтения списка лоадеров', { error: err.message });
+        res.status(500).json({ error: 'Не удалось прочитать список гифок-лоадеров.' });
+    }
+});
+
+// Загрузить гифку на сервер файлом
+app.post('/api/loaders/upload', upload.single('loaderGif'), (req, res) => {
     if (!req.file) {
-        logger('warn', 'Запрос на загрузку GIF отклонен: файл отсутствует');
+        logger('warn', 'Загрузка гифки-файла: файл отсутствует');
         return res.status(400).json({ error: 'Пожалуйста, прикрепите файл GIF.' });
     }
 
-    const publicDir = path.join(__dirname, 'public');
-    if (!fs.existsSync(publicDir)) {
-        fs.mkdirSync(publicDir, { recursive: true });
-    }
+    const name = req.body.name || `Файл: ${req.file.originalname}`;
+    const ext = path.extname(req.file.originalname).toLowerCase() || '.gif';
+    const filename = `loader_${Date.now()}_${Math.floor(Math.random() * 1000)}${ext}`;
+    const targetPath = path.join(loadersDir, filename);
 
-    const targetPath = path.join(publicDir, 'custom_loader.gif');
     try {
         fs.renameSync(req.file.path, targetPath);
-        logger('success', 'Кастомный GIF-лоадер успешно сохранен на сервере');
-        res.json({ success: true, url: '/custom_loader.gif' });
+
+        let loaders = [];
+        if (fs.existsSync(loadersManifestPath)) {
+            loaders = JSON.parse(fs.readFileSync(loadersManifestPath, 'utf-8'));
+        }
+
+        const newLoader = {
+            id: `local-${Date.now()}`,
+            name,
+            type: 'file',
+            filename
+        };
+
+        loaders.push(newLoader);
+        fs.writeFileSync(loadersManifestPath, JSON.stringify(loaders, null, 2));
+
+        logger('success', `Гифка-лоадер загружена как файл: ${filename}`);
+        res.json({ success: true, loader: newLoader });
     } catch (err) {
-        logger('error', 'Ошибка при переносе кастомного GIF-лоадера:', err.message);
-        res.status(500).json({ error: 'Не удалось сохранить файл на диске сервера: ' + err.message });
+        logger('error', 'Ошибка сохранения файла лоадера:', err.message);
+        res.status(500).json({ error: 'Не удалось сохранить файл на сервере: ' + err.message });
     }
 });
+
+// Добавить гифку по ссылке (URL)
+app.post('/api/loaders/add-url', (req, res) => {
+    const { name, url } = req.body;
+    if (!url) {
+        return res.status(400).json({ error: 'Не указана ссылка на GIF.' });
+    }
+
+    try {
+        let loaders = [];
+        if (fs.existsSync(loadersManifestPath)) {
+            loaders = JSON.parse(fs.readFileSync(loadersManifestPath, 'utf-8'));
+        }
+
+        const newLoader = {
+            id: `url-${Date.now()}`,
+            name: name || `Ссылка: ${new URL(url).hostname}`,
+            type: 'url',
+            url
+        };
+
+        loaders.push(newLoader);
+        fs.writeFileSync(loadersManifestPath, JSON.stringify(loaders, null, 2));
+
+        logger('success', `Добавлена гифка-лоадер по ссылке: ${url}`);
+        res.json({ success: true, loader: newLoader });
+    } catch (err) {
+        logger('error', 'Ошибка сохранения лоадера по ссылке:', err.message);
+        res.status(500).json({ error: 'Не удалось сохранить ссылку в галерее: ' + err.message });
+    }
+});
+
+// Удалить гифку
+app.delete('/api/loaders/:id', (req, res) => {
+    const { id } = req.params;
+
+    if (id === 'default-amogus') {
+        return res.status(400).json({ error: 'Нельзя удалить дефолтный лоадер.' });
+    }
+
+    try {
+        let loaders = [];
+        if (fs.existsSync(loadersManifestPath)) {
+            loaders = JSON.parse(fs.readFileSync(loadersManifestPath, 'utf-8'));
+        }
+
+        const loaderToDelete = loaders.find(l => l.id === id);
+        if (!loaderToDelete) {
+            return res.status(404).json({ error: 'Гифка-лоадер не найдена.' });
+        }
+
+        // Если это файл, удаляем его физически
+        if (loaderToDelete.type === 'file' && loaderToDelete.filename) {
+            const filepath = path.join(loadersDir, loaderToDelete.filename);
+            if (fs.existsSync(filepath)) {
+                fs.unlinkSync(filepath);
+            }
+        }
+
+        loaders = loaders.filter(l => l.id !== id);
+        fs.writeFileSync(loadersManifestPath, JSON.stringify(loaders, null, 2));
+
+        logger('success', `Лоадер ${id} успешно удален`);
+        res.json({ success: true });
+    } catch (err) {
+        logger('error', `Ошибка при удалении лоадера ${id}:`, err.message);
+        res.status(500).json({ error: 'Не удалось удалить гифку: ' + err.message });
+    }
+});
+
+
+// ==========================================
+// СТАНДАРТНЫЙ ФУНКЦИОНАЛ ИЗОБРАЖЕНИЙ
+// ==========================================
 
 app.get('/api/gallery', (req, res) => {
     const manifestPath = path.join(savedImagesDir, 'manifest.json');
@@ -178,7 +302,7 @@ app.post('/api/generate', async (req, res) => {
             background: background || 'auto',
             moderation: moderation || 'auto',
             n: parseInt(n) || 1,
-            isEditMode: false // <--- ЯВНОЕ УКАЗАНИЕ РЕЖИМА ГЕНЕРАЦИИ ДЛЯ СОХРАНЕНИЯ ПАРАМЕТРОВ
+            isEditMode: false
         };
 
         logger('info', `Запуск генерации через OpenAI SDK...`);
@@ -300,7 +424,7 @@ app.post('/api/edit', upload.fields([
             quality: quality || 'auto',
             moderation: moderation || 'auto',
             n: parseInt(n) || 1,
-            isEditMode: true // <--- ЯВНОЕ УКАЗАНИЕ РЕЖИМА РЕДАКТИРОВАНИЯ ДЛЯ СОХРАНЕНИЯ ПАРАМЕТРОВ
+            isEditMode: true
         };
 
         logger('info', `Отправка запроса на редактирование через прямой Fetch...`);
@@ -313,9 +437,10 @@ app.post('/api/edit', upload.fields([
             body: JSON.stringify(editPayload)
         });
 
-        // ИСПРАВЛЕНА ОШИБКА ОТОБРАЖЕНИЯ ПУСТЫХ СКОБОК {}: Улучшен вывод ошибок прокси
+        // УЛУЧШЕННЫЙ ВЫВОД ОШИБОК ПРОКСИ, идентичный Text-To-Image
         if (!response.ok) {
             let apiErrorMsg = '';
+            let status = response.status || 400;
             try {
                 const responseText = await response.text();
                 try {
@@ -331,13 +456,17 @@ app.post('/api/edit', upload.fields([
             if (!apiErrorMsg || apiErrorMsg === '{}' || apiErrorMsg.trim() === '') {
                 apiErrorMsg = `Ошибка HTTP статус ${response.status}`;
             }
-            throw new Error(`Прокси вернул ошибку: ${apiErrorMsg}`);
+
+            const customErr = new Error(apiErrorMsg);
+            customErr.status = status;
+            throw customErr;
         }
 
         const resJson = await response.json();
 
         if (!resJson || !resJson.data) {
-            throw new Error('Прокси вернул пустой или некорректный ответ');
+            const apiErrorMsg = resJson?.error?.message || resJson?.error || JSON.stringify(resJson) || 'Пустой ответ прокси';
+            throw new Error(apiErrorMsg);
         }
 
         const normalizedData = [];
@@ -357,8 +486,9 @@ app.post('/api/edit', upload.fields([
     } catch (error) {
         cleanupUploadedFiles();
         let errMsg = error.message || 'Неизвестная ошибка при редактировании';
+        let status = error.status || 500;
         logger('error', 'Ошибка при редактировании через HTTP-запрос', { error: errMsg });
-        res.status(500).json({ error: errMsg });
+        res.status(status).json({ error: errMsg });
     }
 });
 

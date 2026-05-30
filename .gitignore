@@ -13,3 +13,4 @@
 *.log
 
 saved_images/*
+public/loaders/*

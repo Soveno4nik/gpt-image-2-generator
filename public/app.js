@@ -12,23 +12,24 @@ let lastRequestParams = null;
 // Кэш манифеста галереи
 let galleryManifest = [];
 
+// Переменные для галереи анимаций (GIF)
+let loadersList = [];
+let selectedLoaderId = localStorage.getItem('selected_loader_id') || 'default-amogus';
+let loaderUseMode = localStorage.getItem('loader_use_mode') || 'selected';
+
+// Переменные для пагинации галереи изображений
+let currentGalleryPage = 1;
+const itemsPerPage = 30;
+
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('proxy-url').value = localStorage.getItem('proxy_url') || '';
     document.getElementById('api-key').value = localStorage.getItem('api_key') || '';
 
-    // Инициализация лоадеров
-    const mode = localStorage.getItem('loader_type') || 'url';
-    if (mode === 'file') {
-        document.getElementById('loader-mode-file').checked = true;
-    } else {
-        document.getElementById('loader-mode-url').checked = true;
-    }
-    document.getElementById('loader-url').value = localStorage.getItem('loader_url') || 'https://media1.tenor.com/m/-YlzaY7PXb4AAAAd/among-us-amogus.gif';
+    // Инициализация галереи гифок-лоадеров
+    initLoaders();
 
-    toggleLoaderInputs();
-    updateLoaderGif();
-
-    loadGallery();
+    // Загрузка первой страницы галереи сохраненных картинок
+    loadGallery(1);
 
     document.getElementById('param-size').addEventListener('change', (e) => {
         const container = document.getElementById('custom-size-container');
@@ -39,42 +40,132 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // ИСПРАВЛЕН ВЫВОД ПОРЯДКА ФАЙЛОВ: Слушатель изменения файлов в Image-to-Image
-    document.getElementById('edit-image').addEventListener('change', (e) => {
-        const display = document.getElementById('local-files-display');
-        const listContainer = document.getElementById('local-files-list');
-        const files = e.target.files;
+    // Слушатель изменения файлов в Image-to-Image (с отображением порядка загрузки)
+    const editImageInput = document.getElementById('edit-image');
+    if (editImageInput) {
+        editImageInput.addEventListener('change', (e) => {
+            const display = document.getElementById('local-files-display');
+            const listContainer = document.getElementById('local-files-list');
+            const files = e.target.files;
 
-        if (files.length === 0) {
-            display.classList.add('hidden');
+            if (files.length === 0) {
+                display.classList.add('hidden');
+                listContainer.innerHTML = '';
+                return;
+            }
+
+            display.classList.remove('hidden');
             listContainer.innerHTML = '';
-            return;
-        }
 
-        display.classList.remove('hidden');
-        listContainer.innerHTML = '';
-
-        // Выводим файлы строго по их нумерованному индексу в порядке выбора
-        Array.from(files).forEach((file, index) => {
-            const item = document.createElement('div');
-            item.className = 'flex items-center justify-between p-1 bg-zinc-800/40 border border-zinc-700/30 rounded px-2 font-semibold text-[11px]';
-            item.innerHTML = `
-                <span class="truncate pr-2 text-zinc-300">
-                    <span class="font-mono text-indigo-400 font-bold mr-1.5">[#${index + 1}]</span>${file.name}
-                </span>
-                <span class="text-[9px] text-gray-500 font-mono shrink-0">${(file.size / 1024).toFixed(1)} KB</span>
-            `;
-            listContainer.appendChild(item);
+            // Выводим файлы строго по их нумерованному индексу в порядке выбора
+            Array.from(files).forEach((file, index) => {
+                const item = document.createElement('div');
+                item.className = 'flex items-center justify-between p-1 bg-zinc-800/40 border border-zinc-700/30 rounded px-2 font-semibold text-[11px]';
+                item.innerHTML = `
+                    <span class="truncate pr-2 text-zinc-300">
+                        <span class="font-mono text-indigo-400 font-bold mr-1.5">[#${index + 1}]</span>${file.name}
+                    </span>
+                    <span class="text-[9px] text-gray-500 font-mono shrink-0">${(file.size / 1024).toFixed(1)} KB</span>
+                `;
+                listContainer.appendChild(item);
+            });
         });
-    });
+    }
 });
 
-// Управление отображением инпутов лоадеров в модальном окне настроек
-function toggleLoaderInputs() {
-    const mode = document.querySelector('input[name="loader-mode"]:checked').value;
-    const urlContainer = document.getElementById('loader-url-container');
-    const fileContainer = document.getElementById('loader-file-container');
-    if (mode === 'file') {
+// ==========================================
+// УПРАВЛЕНИЕ ГАЛЕРЕЕЙ ГИФОК-ЛОАДЕРОВ
+// ==========================================
+
+async function initLoaders() {
+    if (loaderUseMode === 'random') {
+        const el = document.getElementById('loader-use-random');
+        if (el) el.checked = true;
+    } else {
+        const el = document.getElementById('loader-use-selected');
+        if (el) el.checked = true;
+    }
+    toggleLoaderUseMode();
+    await loadLoaders();
+}
+
+async function loadLoaders() {
+    try {
+        const res = await fetch('/api/loaders');
+        loadersList = await res.json();
+        renderLoadersList();
+    } catch (err) {
+        console.error('Ошибка при загрузке списка лоадеров:', err);
+    }
+}
+
+function renderLoadersList() {
+    const container = document.getElementById('loaders-list-container');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    if (loadersList.length === 0) {
+        container.innerHTML = '<span class="text-[11px] text-gray-500 text-center py-2">Галерея гифок пуста</span>';
+        return;
+    }
+
+    loadersList.forEach(loader => {
+        const isSelected = loader.id === selectedLoaderId;
+        const isDisabledMode = loaderUseMode === 'random';
+
+        const card = document.createElement('div');
+        const borderClass = isSelected && !isDisabledMode ? 'border-indigo-500 bg-[#1f242c]' : 'border-[#30363d] bg-[#161b22]';
+        const opacityClass = isDisabledMode ? 'opacity-60' : '';
+
+        const imgUrl = loader.type === 'file' ? `/loaders/${loader.filename}` : loader.url;
+
+        card.className = `flex items-center gap-2 p-1.5 rounded border ${borderClass} ${opacityClass} transition`;
+        card.innerHTML = `
+            <img src="${imgUrl}" class="w-10 h-10 object-contain rounded bg-black shrink-0">
+            <div class="flex-1 min-w-0">
+                <p class="text-[11px] font-bold text-white truncate">${loader.name}</p>
+                <p class="text-[9px] text-gray-500 truncate">${loader.type === 'file' ? 'Локальный файл' : 'Ссылка'}</p>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+                ${!isDisabledMode ? `
+                    <button onclick="selectLoader('${loader.id}')" class="px-2 py-1 rounded text-[10px] font-bold transition ${isSelected ? 'bg-indigo-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-gray-300'}">
+                        ${isSelected ? 'Выбран' : 'Выбрать'}
+                    </button>
+                ` : ''}
+                ${loader.id !== 'default-amogus' ? `
+                    <button onclick="deleteLoader('${loader.id}')" class="text-red-400 hover:text-red-300 p-1" title="Удалить гифку">
+                        <i class="fa-solid fa-trash text-xs"></i>
+                    </button>
+                ` : ''}
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+function selectLoader(id) {
+    selectedLoaderId = id;
+    localStorage.setItem('selected_loader_id', id);
+    renderLoadersList();
+    updateLoaderGif();
+    showToast('Анимация ожидания успешно выбрана!', 'success');
+}
+
+function toggleLoaderUseMode() {
+    const selectedRadio = document.querySelector('input[name="loader-use-mode"]:checked');
+    if (!selectedRadio) return;
+    const checkedMode = selectedRadio.value;
+    loaderUseMode = checkedMode;
+    localStorage.setItem('loader_use_mode', checkedMode);
+    renderLoadersList();
+}
+
+function toggleAddLoaderInputs() {
+    const checkedType = document.querySelector('input[name="add-loader-type"]:checked').value;
+    const urlContainer = document.getElementById('add-loader-url-container');
+    const fileContainer = document.getElementById('add-loader-file-container');
+    if (checkedType === 'file') {
         urlContainer.classList.add('hidden');
         fileContainer.classList.remove('hidden');
     } else {
@@ -83,57 +174,133 @@ function toggleLoaderInputs() {
     }
 }
 
-// Сброс ссылки на стандартного космонавта Among Us
-function resetLoaderUrl() {
-    document.getElementById('loader-url').value = 'https://media1.tenor.com/m/-YlzaY7PXb4AAAAd/among-us-amogus.gif';
-    showToast('Ссылка сброшена на стандартную гифку!', 'info');
+async function addNewLoader() {
+    const nameInput = document.getElementById('new-loader-name');
+    const type = document.querySelector('input[name="add-loader-type"]:checked').value;
+    const name = nameInput.value.trim();
+
+    if (type === 'url') {
+        const urlInput = document.getElementById('new-loader-url');
+        const url = urlInput.value.trim();
+        if (!url) {
+            showToast('Пожалуйста, введите корректную ссылку на GIF.', 'error');
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/loaders/add-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, url })
+            });
+            await handleResponse(res);
+            showToast('Гифка успешно добавлена по ссылке!', 'success');
+            urlInput.value = '';
+            nameInput.value = '';
+            await loadLoaders();
+        } catch (err) {
+            showToast('Не удалось добавить гифку: ' + err.message, 'error');
+        }
+    } else {
+        const fileInput = document.getElementById('new-loader-file');
+        if (fileInput.files.length === 0) {
+            showToast('Пожалуйста, выберите GIF-файл на компьютере.', 'error');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('loaderGif', fileInput.files[0]);
+        if (name) formData.append('name', name);
+
+        try {
+            const res = await fetch('/api/loaders/upload', {
+                method: 'POST',
+                body: formData
+            });
+            await handleResponse(res);
+            showToast('Гифка успешно загружена и сохранена!', 'success');
+            fileInput.value = '';
+            nameInput.value = '';
+            await loadLoaders();
+        } catch (err) {
+            showToast('Ошибка при загрузке файла: ' + err.message, 'error');
+        }
+    }
 }
 
-// Загрузка локального GIF на сервер бэкенда
-async function uploadCustomLoader() {
-    const fileInput = document.getElementById('loader-file');
-    if (fileInput.files.length === 0) {
-        showToast('Пожалуйста, сначала выберите файл GIF на вашем компьютере.', 'error');
-        return;
-    }
-    const file = fileInput.files[0];
-    const formData = new FormData();
-    formData.append('loaderGif', file);
+async function deleteLoader(id) {
+    const confirmed = await showConfirm('Вы действительно хотите навсегда удалить эту гифку из галереи лоадеров?');
+    if (!confirmed) return;
 
     try {
-        const res = await fetch('/api/upload-loader', {
-            method: 'POST',
-            body: formData
-        });
+        const res = await fetch(`/api/loaders/${id}`, { method: 'DELETE' });
         await handleResponse(res);
-        showToast('Анимация GIF успешно загружена на сервер!', 'success');
+        showToast('Гифка успешно удалена из галереи лоадеров', 'success');
 
-        // Переключаем настройки в режим "Файл"
-        localStorage.setItem('loader_type', 'file');
-        document.getElementById('loader-mode-file').checked = true;
-        toggleLoaderInputs();
+        if (selectedLoaderId === id) {
+            selectedLoaderId = 'default-amogus';
+            localStorage.setItem('selected_loader_id', 'default-amogus');
+        }
+
+        await loadLoaders();
         updateLoaderGif();
     } catch (err) {
-        showToast('Ошибка при загрузке GIF: ' + err.message, 'error');
+        showToast('Ошибка при удалении: ' + err.message, 'error');
     }
 }
 
-// Обновление гифки лоадера с кэш-бастером (t=...) для моментального применения
+// Обновление гифки ожидания с обходом кэша браузера
 function updateLoaderGif() {
     const loaderGif = document.getElementById('loader-gif');
     if (!loaderGif) return;
 
-    const mode = localStorage.getItem('loader_type') || 'url';
-    const url = localStorage.getItem('loader_url') || 'https://media1.tenor.com/m/-YlzaY7PXb4AAAAd/among-us-amogus.gif';
-
-    if (mode === 'file') {
-        loaderGif.src = '/custom_loader.gif?t=' + Date.now();
+    if (loaderUseMode === 'random') {
+        if (loadersList.length > 0) {
+            const randomLoader = loadersList[Math.floor(Math.random() * loadersList.length)];
+            const imgUrl = randomLoader.type === 'file' ? `/loaders/${randomLoader.filename}` : randomLoader.url;
+            loaderGif.src = imgUrl + (imgUrl.includes('?') ? '&' : '?') + 'cache_buster=' + Date.now();
+        } else {
+            loaderGif.src = 'https://media1.tenor.com/m/-YlzaY7PXb4AAAAd/among-us-amogus.gif';
+        }
     } else {
-        loaderGif.src = url;
+        const selected = loadersList.find(l => l.id === selectedLoaderId) || loadersList[0];
+        if (selected) {
+            const imgUrl = selected.type === 'file' ? `/loaders/${selected.filename}` : selected.url;
+            loaderGif.src = imgUrl + (imgUrl.includes('?') ? '&' : '?') + 'cache_buster=' + Date.now();
+        } else {
+            loaderGif.src = 'https://media1.tenor.com/m/-YlzaY7PXb4AAAAd/among-us-amogus.gif';
+        }
     }
 }
 
-// Система Lightbox (Открытие изображения во весь экран)
+// ==========================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И ОЧИСТКА ФАЙЛОВ
+// ==========================================
+
+// Громкая очистка файлов пользователем
+function clearLocalFiles() {
+    const fileInput = document.getElementById('edit-image');
+    if (fileInput) fileInput.value = '';
+
+    const display = document.getElementById('local-files-display');
+    const listContainer = document.getElementById('local-files-list');
+    if (display) display.classList.add('hidden');
+    if (listContainer) listContainer.innerHTML = '';
+    showToast('Выбранные локальные файлы успешно очищены.', 'info');
+}
+
+// Тихая очистка файлов при переходе из галереи
+function clearLocalFilesSilently() {
+    const fileInput = document.getElementById('edit-image');
+    if (fileInput) fileInput.value = '';
+
+    const display = document.getElementById('local-files-display');
+    const listContainer = document.getElementById('local-files-list');
+    if (display) display.classList.add('hidden');
+    if (listContainer) listContainer.innerHTML = '';
+}
+
+// Система Lightbox
 function openLightbox(url) {
     const lightbox = document.getElementById('lightbox');
     const lightboxImg = document.getElementById('lightbox-img');
@@ -234,19 +401,8 @@ function saveSettings() {
     localStorage.setItem('proxy_url', proxy);
     localStorage.setItem('api_key', key);
 
-    // Сохранение настроек лоадера
-    const loaderMode = document.querySelector('input[name="loader-mode"]:checked').value;
-    const loaderUrl = document.getElementById('loader-url').value.trim();
-
-    localStorage.setItem('loader_type', loaderMode);
-    if (loaderUrl) {
-        localStorage.setItem('loader_url', loaderUrl);
-    }
-
-    updateLoaderGif();
-
-    toggleSettings();
     showToast('Настройки подключения и лоадера успешно сохранены!', 'success');
+    toggleSettings();
 }
 
 function getSettingsHeaders() {
@@ -281,7 +437,7 @@ async function handleResponse(res) {
     return data;
 }
 
-// Встроенный вывод ошибок
+// Встроенный вывод ошибок (Одинаковый для Edit и Generate)
 function showLocalError(msg) {
     const errorContainer = document.getElementById('error-container');
     const errorMessageText = document.getElementById('error-message-text');
@@ -293,7 +449,7 @@ function showLocalError(msg) {
     errorContainer.classList.remove('hidden');
 }
 
-// Функция управления состоянием генерации
+// Управление состоянием лоадера генерации
 function setGenerationState(isLoading) {
     const btnGen = document.getElementById('btn-generate');
     const btnEdit = document.getElementById('btn-edit');
@@ -304,6 +460,10 @@ function setGenerationState(isLoading) {
         btnEdit.disabled = true;
         btnGen.classList.add('opacity-50', 'cursor-not-allowed');
         btnEdit.classList.add('opacity-50', 'cursor-not-allowed');
+
+        // Моментально обновляем GIF согласно выбранным режимам (Selected / Random) перед показом лоадера
+        updateLoaderGif();
+
         loader.classList.remove('hidden');
     } else {
         btnGen.disabled = false;
@@ -355,7 +515,9 @@ function switchTab(tabId) {
     });
 }
 
+// ==========================================
 // ГЕНЕРАЦИЯ (Text-to-Image)
+// ==========================================
 async function generateImage() {
     const prompt = document.getElementById('gen-prompt').value;
     let size = document.getElementById('param-size').value;
@@ -408,8 +570,8 @@ async function generateImage() {
 
         displayResults(urls, prompt);
 
-        // Автоматически обновляем вкладку галереи
-        loadGallery();
+        // Обновляем галерею и возвращаем на 1 страницу
+        loadGallery(1);
         showToast('Изображение успешно создано и сохранено в галерею!', 'success');
     } catch (err) {
         if (err.name === 'AbortError') {
@@ -423,7 +585,9 @@ async function generateImage() {
     }
 }
 
-// РЕДАКТИРОВАНИЕ (Edit)
+// ==========================================
+// РЕДАКТИРОВАНИЕ (Image-to-Image)
+// ==========================================
 async function editImage() {
     const prompt = document.getElementById('edit-prompt').value;
     let size = document.getElementById('param-size').value;
@@ -499,13 +663,14 @@ async function editImage() {
 
         displayResults(urls, prompt);
 
-        // Автоматически обновляем галерею
-        loadGallery();
+        // Обновляем галерею и возвращаем на 1 страницу
+        loadGallery(1);
         showToast('Изображение отредактировано и сохранено в галерею!', 'success');
     } catch (err) {
         if (err.name === 'AbortError') {
             document.getElementById('no-result').classList.remove('hidden');
         } else {
+            // Ошибки при редактировании теперь выводятся точно так же, как при генерации!
             showLocalError(err.message);
         }
     } finally {
@@ -568,38 +733,11 @@ function displayResults(urls, prompt) {
     document.getElementById('result-container').classList.remove('hidden');
 }
 
-// Ручное сохранение конкретного изображения
-async function saveSpecificImage(url, prompt, btnElement) {
-    btnElement.disabled = true;
-    const originalHTML = btnElement.innerHTML;
-    btnElement.innerHTML = `<i class="fa-solid fa-spinner animate-spin"></i> Сохранение...`;
-    btnElement.classList.add('opacity-50');
-
-    try {
-        const res = await fetch('/api/save-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                imageUrl: url,
-                prompt: prompt,
-                params: lastRequestParams
-            })
-        });
-        await handleResponse(res);
-
-        btnElement.innerHTML = `<i class="fa-solid fa-check text-green-400"></i> Сохранено!`;
-        showToast('Изображение добавлено в галерею!', 'success');
-        loadGallery();
-    } catch (err) {
-        showToast('Ошибка сохранения:\n' + err.message, 'error');
-        btnElement.innerHTML = originalHTML;
-        btnElement.disabled = false;
-        btnElement.classList.remove('opacity-50');
-    }
-}
-
-// Загрузка галереи
-function loadGallery() {
+// ==========================================
+// ГАЛЕРЕЯ С ПАГИНАЦИЕЙ (30 штук на странице)
+// ==========================================
+function loadGallery(page = 1) {
+    currentGalleryPage = page;
     fetch('/api/gallery')
         .then(res => res.json())
         .then(data => {
@@ -615,10 +753,24 @@ function loadGallery() {
 
             if (galleryManifest.length === 0) {
                 container.innerHTML = '<p class="text-xs text-gray-500 col-span-full text-center py-4">Галерея пуста</p>';
+                renderPagination(0);
                 return;
             }
 
-            galleryManifest.forEach(item => {
+            // Расчёт пагинации
+            const totalItems = galleryManifest.length;
+            const totalPages = Math.ceil(totalItems / itemsPerPage);
+
+            // Корректируем страницу, если элементы удалили
+            if (currentGalleryPage > totalPages) {
+                currentGalleryPage = totalPages || 1;
+            }
+
+            const startIndex = (currentGalleryPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const pageItems = galleryManifest.slice(startIndex, endIndex);
+
+            pageItems.forEach(item => {
                 const card = document.createElement('div');
                 card.className = 'group relative rounded overflow-hidden border border-[#30363d] bg-black h-28 flex items-center justify-center';
                 card.innerHTML = `
@@ -656,15 +808,86 @@ function loadGallery() {
 
                 container.appendChild(card);
             });
+
+            renderPagination(totalPages);
         })
-        .catch(err => console.error('Ошибка галереи:', err));
+        .catch(err => console.error('Ошибка при рендере галереи:', err));
+}
+
+function renderPagination(totalPages) {
+    const paginationContainer = document.getElementById('gallery-pagination');
+    if (!paginationContainer) return;
+
+    paginationContainer.innerHTML = '';
+
+    if (totalPages <= 1) return;
+
+    // Кнопка Назад
+    const prevBtn = document.createElement('button');
+    prevBtn.disabled = currentGalleryPage === 1;
+    prevBtn.className = `px-2 py-1 text-xs rounded font-bold transition ${currentGalleryPage === 1 ? 'bg-zinc-800 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}`;
+    prevBtn.innerHTML = '<i class="fa-solid fa-chevron-left"></i>';
+    prevBtn.onclick = () => loadGallery(currentGalleryPage - 1);
+    paginationContainer.appendChild(prevBtn);
+
+    const startPage = Math.max(1, currentGalleryPage - 1);
+    const endPage = Math.min(totalPages, currentGalleryPage + 1);
+
+    if (startPage > 1) {
+        const firstPageBtn = document.createElement('button');
+        firstPageBtn.className = `px-2.5 py-1 text-xs rounded font-bold transition bg-zinc-800 hover:bg-zinc-700 text-gray-300`;
+        firstPageBtn.innerText = '1';
+        firstPageBtn.onclick = () => loadGallery(1);
+        paginationContainer.appendChild(firstPageBtn);
+
+        if (startPage > 2) {
+            const dots = document.createElement('span');
+            dots.className = 'text-gray-500 text-xs px-1';
+            dots.innerText = '...';
+            paginationContainer.appendChild(dots);
+        }
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+        const pageBtn = document.createElement('button');
+        const isActive = i === currentGalleryPage;
+        pageBtn.className = `px-2.5 py-1 text-xs rounded font-bold transition ${isActive ? 'bg-indigo-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-gray-300'}`;
+        pageBtn.innerText = i;
+        pageBtn.onclick = () => loadGallery(i);
+        paginationContainer.appendChild(pageBtn);
+    }
+
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            const dots = document.createElement('span');
+            dots.className = 'text-gray-500 text-xs px-1';
+            dots.innerText = '...';
+            paginationContainer.appendChild(dots);
+        }
+
+        const lastPageBtn = document.createElement('button');
+        lastPageBtn.className = `px-2.5 py-1 text-xs rounded font-bold transition bg-zinc-800 hover:bg-zinc-700 text-gray-300`;
+        lastPageBtn.innerText = totalPages;
+        lastPageBtn.onclick = () => loadGallery(totalPages);
+        paginationContainer.appendChild(lastPageBtn);
+    }
+
+    // Кнопка Вперед
+    const nextBtn = document.createElement('button');
+    nextBtn.disabled = currentGalleryPage === totalPages;
+    nextBtn.className = `px-2 py-1 text-xs rounded font-bold transition ${currentGalleryPage === totalPages ? 'bg-zinc-800 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}`;
+    nextBtn.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
+    nextBtn.onclick = () => loadGallery(currentGalleryPage + 1);
+    paginationContainer.appendChild(nextBtn);
 }
 
 // Восстановление параметров генерации на основе кэшированной картинки
-// ИСПРАВЛЕНО ОПРЕДЕЛЕНИЕ РЕЖИМА: isEditMode восстанавливается без ошибок
 function restoreParams(filename) {
     const item = galleryManifest.find(i => i.filename === filename);
     if (!item) return;
+
+    // ПРИ ПЕРЕХОДЕ ИЗ ГАЛЕРЕИ ОЧИЩАЕМ локальные файлы, если они были выбраны ранее
+    clearLocalFilesSilently();
 
     const params = item.params || { prompt: item.prompt, isEditMode: false };
 
@@ -720,7 +943,15 @@ function useAsReference(filename) {
         selectedGalleryRefs.push(filename);
         showToast(`Картинка "${filename}" добавлена как референс.`, 'info');
     }
-    document.getElementById('edit-image').value = '';
+    // При выборе картинки из галереи как реф, очищаем локальный Input во избежание путаницы
+    const editImageEl = document.getElementById('edit-image');
+    if (editImageEl) editImageEl.value = '';
+
+    const localDisplay = document.getElementById('local-files-display');
+    const localList = document.getElementById('local-files-list');
+    if (localDisplay) localDisplay.classList.add('hidden');
+    if (localList) localList.innerHTML = '';
+
     updateGalleryRefsUI();
     switchTab('edit-tab');
 }
@@ -769,7 +1000,7 @@ async function deleteGalleryImage(filename) {
         const res = await fetch(`/api/gallery/${filename}`, { method: 'DELETE' });
         await handleResponse(res);
         removeGalleryRef(filename);
-        loadGallery();
+        loadGallery(currentGalleryPage);
         showToast('Изображение успешно удалено.', 'success');
     } catch (err) {
         showToast('Ошибка при удалении:\n' + err.message, 'error');
