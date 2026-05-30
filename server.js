@@ -71,6 +71,51 @@ const getMimeType = (filename) => {
     return 'application/octet-stream';
 };
 
+// Функция автоматического сохранения сгенерированного изображения на сервере
+async function autoSaveImage(imageUrl, prompt, params) {
+    let buffer;
+    let ext = 'png';
+
+    if (imageUrl.startsWith('data:image')) {
+        const matches = imageUrl.match(/^data:image\/([A-Za-z+]+);base64,(.+)$/);
+        if (!matches || matches.length !== 3) {
+            throw new Error('Некорректный формат Data URI');
+        }
+        ext = matches[1];
+        buffer = Buffer.from(matches[2], 'base64');
+    } else {
+        const response = await fetch(imageUrl);
+        if (!response.ok) throw new Error(`Не удалось скачать картинку. Статус HTTP: ${response.status}`);
+        const arrayBuffer = await response.arrayBuffer();
+        buffer = Buffer.from(arrayBuffer);
+        if (imageUrl.includes('.png')) ext = 'png';
+        else if (imageUrl.includes('.webp')) ext = 'webp';
+        else if (imageUrl.includes('.jpg') || imageUrl.includes('.jpeg')) ext = 'jpg';
+    }
+
+    // Добавляем рандомизатор к имени файла, чтобы при n > 1 файлы не перезаписывали друг друга
+    const filename = `img_${Date.now()}_${Math.floor(Math.random() *10000)}.${ext}`;
+    const filepath = path.join(savedImagesDir, filename);
+
+    fs.writeFileSync(filepath, buffer);
+
+    const manifestPath = path.join(savedImagesDir, 'manifest.json');
+    let manifest = [];
+    if (fs.existsSync(manifestPath)) {
+        manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    }
+
+    manifest.unshift({
+        filename,
+        prompt: prompt || 'Generated Image',
+        timestamp: new Date().toISOString(),
+        params: params || null
+    });
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+    return filename;
+}
+
 app.get('/api/gallery', (req, res) => {
     const manifestPath = path.join(savedImagesDir, 'manifest.json');
     if (fs.existsSync(manifestPath)) {
@@ -80,7 +125,7 @@ app.get('/api/gallery', (req, res) => {
     }
 });
 
-// ГЕНЕРАЦИЯ (Text-to-Image)
+// ГЕНЕРАЦИЯ (Text-to-Image с автосохранением на диске сервера)
 app.post('/api/generate', async (req, res) => {
     const { prompt, size, quality, output_format, background, moderation, n } = req.body;
     const { token, apiBase } = getAuthHeaders(req);
@@ -101,7 +146,6 @@ app.post('/api/generate', async (req, res) => {
             baseURL: apiBase
         });
 
-        // Формируем payload без условных операторов. Всегда передаем строковые значения, включая 'auto'!
         const payload = {
             model: 'gpt-image-2',
             prompt: prompt,
@@ -121,14 +165,20 @@ app.post('/api/generate', async (req, res) => {
             throw new Error(`Прокси вернул ошибку: ${apiErrorMsg}`);
         }
 
-        const normalizedData = response.data.map(item => {
-            if (item.b64_json) {
-                return { url: `data:image/png;base64,${item.b64_json}` };
+        // Автоматически скачиваем и сохраняем каждое изображение в галерею
+        const normalizedData = [];
+        for (const item of response.data) {
+            const rawUrl = item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url;
+            try {
+                const filename = await autoSaveImage(rawUrl, prompt, payload);
+                normalizedData.push({ url: `/saved_images/${filename}` });
+            } catch (saveErr) {
+                logger('error', 'Ошибка автосохранения сгенерированного изображения', { error: saveErr.message });
+                normalizedData.push({ url: rawUrl }); // fallback в случае сбоя автосохранения
             }
-            return { url: item.url };
-        });
+        }
 
-        logger('success', `Успешно сгенерировано изображений: ${normalizedData.length}`);
+        logger('success', `Успешно сгенерировано и автоматически сохранено изображений: ${normalizedData.length}`);
         res.json({ data: normalizedData });
     } catch (error) {
         let errMsg = 'Неизвестная ошибка OpenAI SDK';
@@ -146,11 +196,11 @@ app.post('/api/generate', async (req, res) => {
     }
 });
 
-// РЕДАКТИРОВАНИЕ (Image-to-Image)
+// РЕДАКТИРОВАНИЕ (Image-to-Image с автосохранением на диске сервера)
 app.post('/api/edit', upload.fields([
     { name: 'image', maxCount: 16 }
 ]), async (req, res) => {
-    const { prompt, size, moderation, savedImageRefs, n } = req.body;
+    const { prompt, size, quality, moderation, savedImageRefs, n } = req.body;
     const { token, apiBase } = getAuthHeaders(req);
 
     const uploadedImages = req.files['image'] || [];
@@ -166,7 +216,7 @@ app.post('/api/edit', upload.fields([
 
     logger('info', 'Запрос на редактирование (Edit Mode)', {
         prompt: prompt ? `${prompt.substring(0, 60)}...` : null,
-        size, moderation, uploadedCount: uploadedImages.length, galleryCount: parsedSavedRefs.length, n
+        size, quality, moderation, uploadedCount: uploadedImages.length, galleryCount: parsedSavedRefs.length, n
     });
 
     if (!token) {
@@ -219,12 +269,13 @@ app.post('/api/edit', upload.fields([
 
         cleanupUploadedFiles();
 
-        // Формируем payload. Всегда передаем размер строкой, включая 'auto'!
+        // Формируем payload (с поддержкой переданного качества quality)
         const editPayload = {
             model: 'gpt-image-2',
             prompt: prompt,
             images: imageObjects,
             size: size || 'auto',
+            quality: quality || 'auto',
             moderation: moderation || 'auto',
             n: parseInt(n) || 1
         };
@@ -251,14 +302,20 @@ app.post('/api/edit', upload.fields([
             throw new Error('Прокси вернул пустой или некорректный ответ');
         }
 
-        const normalizedData = resJson.data.map(item => {
-            if (item.b64_json) {
-                return { url: `data:image/png;base64,${item.b64_json}` };
+        // Автоматически скачиваем и сохраняем каждое отредактированное изображение в галерею
+        const normalizedData = [];
+        for (const item of resJson.data) {
+            const rawUrl = item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url;
+            try {
+                const filename = await autoSaveImage(rawUrl, prompt, editPayload);
+                normalizedData.push({ url: `/saved_images/${filename}` });
+            } catch (saveErr) {
+                logger('error', 'Ошибка автосохранения отредактированного изображения', { error: saveErr.message });
+                normalizedData.push({ url: rawUrl });
             }
-            return { url: item.url };
-        });
+        }
 
-        logger('success', `Изображение успешно отредактировано. Вариантов: ${normalizedData.length}`);
+        logger('success', `Изображение успешно отредактировано и сохранено. Вариантов: ${normalizedData.length}`);
         res.json({ data: normalizedData });
     } catch (error) {
         cleanupUploadedFiles();
@@ -268,7 +325,7 @@ app.post('/api/edit', upload.fields([
     }
 });
 
-// СОХРАНЕНИЕ
+// СОХРАНЕНИЕ (ручное сохранение оставлено для совместимости)
 app.post('/api/save-image', async (req, res) => {
     const { imageUrl, prompt, params } = req.body;
 
@@ -276,7 +333,7 @@ app.post('/api/save-image', async (req, res) => {
         ? `${imageUrl.substring(0, 80)}... [Base64 данных]`
         : imageUrl;
 
-    logger('info', 'Запрос на сохранение изображения', { imageUrl: safeUrlLog, hasParams: !!params });
+    logger('info', 'Запрос на ручное сохранение изображения (совместимость)', { imageUrl: safeUrlLog, hasParams: !!params });
 
     if (!imageUrl) {
         logger('warn', 'Сохранение отменено: отсутствует imageUrl');
@@ -284,51 +341,11 @@ app.post('/api/save-image', async (req, res) => {
     }
 
     try {
-        let buffer;
-        let ext = 'png';
-
-        if (imageUrl.startsWith('data:image')) {
-            logger('info', 'Декодирование Base64 для сохранения на диск...');
-            const matches = imageUrl.match(/^data:image\/([A-Za-z+]+);base64,(.+)$/);
-            if (!matches || matches.length !== 3) {
-                throw new Error('Некорректный формат Data URI');
-            }
-            ext = matches[1];
-            buffer = Buffer.from(matches[2], 'base64');
-        } else {
-            logger('info', 'Скачивание с URL прокси...');
-            const response = await fetch(imageUrl);
-            if (!response.ok) throw new Error(`Не удалось скачать картинку. Статус HTTP: ${response.status}`);
-            const arrayBuffer = await response.arrayBuffer();
-            buffer = Buffer.from(arrayBuffer);
-            if (imageUrl.includes('.png')) ext = 'png';
-            else if (imageUrl.includes('.webp')) ext = 'webp';
-            else if (imageUrl.includes('.jpg') || imageUrl.includes('.jpeg')) ext = 'jpg';
-        }
-
-        const filename = `img_${Date.now()}.${ext}`;
-        const filepath = path.join(savedImagesDir, filename);
-
-        fs.writeFileSync(filepath, buffer);
-
-        const manifestPath = path.join(savedImagesDir, 'manifest.json');
-        let manifest = [];
-        if (fs.existsSync(manifestPath)) {
-            manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-        }
-
-        manifest.unshift({
-            filename,
-            prompt: prompt || 'Generated Image',
-            timestamp: new Date().toISOString(),
-            params: params || null
-        });
-        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-
-        logger('success', `Изображение успешно сохранено: ${filename}`);
+        const filename = await autoSaveImage(imageUrl, prompt, params);
+        logger('success', `Изображение успешно сохранено вручную: ${filename}`);
         res.json({ success: true, filename });
     } catch (error) {
-        logger('error', 'Ошибка при сохранении на сервере', { error: error.message });
+        logger('error', 'Ошибка при ручном сохранении на сервере', { error: error.message });
         res.status(500).json({ error: error.message });
     }
 });

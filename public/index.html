@@ -144,7 +144,7 @@
                         </button>
                     </div>
 
-                    <!-- TAB 2: EDIT -->
+                    <!-- TAB 2: EDIT (Добавлен выбор качества для Image-to-Image) -->
                     <div id="edit-tab" class="space-y-4 hidden">
                         <div>
                             <label class="block text-xs font-semibold text-gray-400 mb-1">1. Референсные изображения (Image, до 16 файлов)</label>
@@ -160,6 +160,21 @@
                             </div>
 
                             <input type="file" id="edit-image" accept="image/*" multiple class="w-full bg-[#0d1117] border border-[#30363d] rounded p-2 text-sm text-gray-400 file:mr-4 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-zinc-800 file:text-white hover:file:bg-zinc-700">*
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-400 mb-1">Качество редактирования</label>
+                                <select id="edit-param-quality" class="w-full bg-[#0d1117] border border-[#30363d] rounded p-2 text-sm text-white">
+                                    <option value="auto" selected>Auto (Станд.)</option>
+                                    <option value="high">High (Высокое)</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="low">Low (Быстрое)</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col justify-end">
+                                <span class="text-[10px] text-gray-500 leading-tight mb-1">Влияет на детализацию финальных изменений на референсах.</span>
+                            </div>
                         </div>
 
                         <div>
@@ -230,7 +245,7 @@
 
     </main>
 
-    <!-- ВСТРОЕННЫЙ LIGHTBOX / ПРОСМОТРЩИК (Без текста, чистое изображение по его разрешению) -->
+    <!-- ВСТРОЕННЫЙ LIGHTBOX -->
     <div id="lightbox" class="hidden fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4 cursor-zoom-out" onclick="closeLightbox()">
         <img id="lightbox-img" src="" class="max-w-full max-h-[95vh] object-contain rounded shadow-2xl" onclick="event.stopPropagation()">
         <button class="absolute top-4 right-4 text-gray-400 hover:text-white text-3xl transition" onclick="closeLightbox()">

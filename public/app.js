@@ -247,7 +247,7 @@ async function generateImage() {
     }
     const quality = document.getElementById('param-quality').value;
     const format = document.getElementById('param-format').value;
-    const background = document.getElementById('param-background').value; // Чтение фона
+    const background = document.getElementById('param-background').value;
     const moderation = document.getElementById('param-moderation').value;
     const n = document.getElementById('param-n').value;
 
@@ -269,7 +269,7 @@ async function generateImage() {
         size,
         quality,
         output_format: format,
-        background, // Запоминаем фон в параметрах сохранения
+        background,
         moderation,
         n: parseInt(n),
         isEditMode: false
@@ -288,7 +288,12 @@ async function generateImage() {
 
         const data = await handleResponse(res);
         const urls = data.data.map(item => item.url);
+
         displayResults(urls, prompt);
+
+        // Автоматически обновляем вкладку галереи новыми генерациями
+        loadGallery();
+        showToast('Изображение успешно создано и сохранено в галерею!', 'success');
     } catch (err) {
         if (err.name === 'AbortError') {
             document.getElementById('no-result').classList.remove('hidden');
@@ -301,7 +306,7 @@ async function generateImage() {
     }
 }
 
-// РЕДАКТИРОВАНИЕ (Edit)
+// РЕДАКТИРОВАНИЕ (Edit с поддержкой выбора качества)
 async function editImage() {
     const prompt = document.getElementById('edit-prompt').value;
     let size = document.getElementById('param-size').value;
@@ -310,6 +315,7 @@ async function editImage() {
     }
     const moderation = document.getElementById('param-moderation').value;
     const n = document.getElementById('param-n').value;
+    const quality = document.getElementById('edit-param-quality').value; // Чтение качества
 
     const imageInput = document.getElementById('edit-image');
 
@@ -340,6 +346,7 @@ async function editImage() {
     lastRequestParams = {
         prompt,
         size,
+        quality, // Запоминаем качество
         moderation,
         n: parseInt(n),
         isEditMode: true
@@ -348,6 +355,7 @@ async function editImage() {
     const formData = new FormData();
     formData.append('prompt', prompt);
     formData.append('size', size);
+    formData.append('quality', quality); // Отправляем качество
     formData.append('moderation', moderation);
     formData.append('n', n);
 
@@ -371,7 +379,12 @@ async function editImage() {
 
         const data = await handleResponse(res);
         const urls = data.data.map(item => item.url);
+
         displayResults(urls, prompt);
+
+        // Автоматически обновляем галерею
+        loadGallery();
+        showToast('Изображение отредактировано и сохранено в галерею!', 'success');
     } catch (err) {
         if (err.name === 'AbortError') {
             document.getElementById('no-result').classList.remove('hidden');
@@ -385,7 +398,7 @@ async function editImage() {
 }
 
 // Отображение сетки результатов
-// ДОБАВЛЕНА КНОПКА И СЛУШАТЕЛЬ УВЕЛИЧЕНИЯ (LIGHTBOX)
+// Кнопка сохранения заменена на инфо-бейдж «В галерее», так как файлы сохраняются автоматически
 function displayResults(urls, prompt) {
     const grid = document.getElementById('result-images-grid');
     grid.innerHTML = '';
@@ -413,9 +426,9 @@ function displayResults(urls, prompt) {
                     <button class="expand-img-btn bg-zinc-800 hover:bg-zinc-700 text-white px-2.5 py-1 rounded font-bold transition flex items-center" title="Увеличить в текущем окне">
                         <i class="fa-solid fa-expand"></i>
                     </button>
-                    <button class="save-to-gal-btn bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded font-bold transition flex items-center gap-1">
-                        <i class="fa-solid fa-floppy-disk"></i> В галерею
-                    </button>
+                    <div class="bg-emerald-950/40 border border-emerald-800 text-emerald-400 px-2.5 py-1 rounded font-bold flex items-center gap-1 cursor-default select-none" title="Изображение автоматически сохранено в галерею">
+                        <i class="fa-solid fa-cloud-arrow-down"></i> В галерее
+                    </div>
                     <a href="${url}" target="_blank" download="gpt_image_${index + 1}.png" class="bg-zinc-800 hover:bg-zinc-700 text-white px-2.5 py-1 rounded font-bold transition flex items-center gap-1">
                         <i class="fa-solid fa-download"></i> Скачать
                     </a>
@@ -423,19 +436,12 @@ function displayResults(urls, prompt) {
             </div>
         `;
 
-        // Слушатель на клик по самой картинке (для быстрого зума)
         item.querySelector('.cursor-zoom-in').addEventListener('click', () => {
             openLightbox(url);
         });
 
-        // Слушатель на кнопку расширения картинки
         item.querySelector('.expand-img-btn').addEventListener('click', () => {
             openLightbox(url);
-        });
-
-        const saveBtn = item.querySelector('.save-to-gal-btn');
-        saveBtn.addEventListener('click', () => {
-            saveSpecificImage(url, prompt, saveBtn);
         });
 
         grid.appendChild(item);
@@ -446,7 +452,7 @@ function displayResults(urls, prompt) {
     document.getElementById('result-container').classList.remove('hidden');
 }
 
-// Сохранение конкретного изображения
+// Ручное сохранение конкретного изображения (оставлено для совместимости)
 async function saveSpecificImage(url, prompt, btnElement) {
     btnElement.disabled = true;
     const originalHTML = btnElement.innerHTML;
@@ -466,7 +472,7 @@ async function saveSpecificImage(url, prompt, btnElement) {
         await handleResponse(res);
 
         btnElement.innerHTML = `<i class="fa-solid fa-check text-green-400"></i> Сохранено!`;
-        showToast('Изображение успешно добавлено в галерею!', 'success');
+        showToast('Изображение добавлено в галерею!', 'success');
         loadGallery();
     } catch (err) {
         showToast('Ошибка сохранения:\n' + err.message, 'error');
@@ -528,7 +534,6 @@ function loadGallery() {
                     </div>
                 `;
 
-                // Слушатель открытия увеличенной версии из карточки галереи
                 card.querySelector('.gal-zoom-btn').addEventListener('click', () => {
                     openLightbox(`/saved_images/${item.filename}`);
                 });
@@ -551,6 +556,7 @@ function restoreParams(filename) {
         document.getElementById('edit-prompt').value = params.prompt || '';
         if (params.moderation) document.getElementById('param-moderation').value = params.moderation;
         if (params.n) document.getElementById('param-n').value = params.n;
+        if (params.quality) document.getElementById('edit-param-quality').value = params.quality; // Восстановление качества редактирования
 
         const sizeVal = params.size || 'auto';
         handleSizeRestore(sizeVal);
@@ -559,7 +565,7 @@ function restoreParams(filename) {
         document.getElementById('gen-prompt').value = params.prompt || '';
         if (params.quality) document.getElementById('param-quality').value = params.quality;
         if (params.output_format) document.getElementById('param-format').value = params.output_format;
-        if (params.background) document.getElementById('param-background').value = params.background; // Восстановление фона
+        if (params.background) document.getElementById('param-background').value = params.background;
         if (params.moderation) document.getElementById('param-moderation').value = params.moderation;
         if (params.n) document.getElementById('param-n').value = params.n;
 
