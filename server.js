@@ -93,7 +93,7 @@ async function autoSaveImage(imageUrl, prompt, params) {
         else if (imageUrl.includes('.jpg') || imageUrl.includes('.jpeg')) ext = 'jpg';
     }
 
-    // Добавляем рандомизатор к имени файла, чтобы при n > 1 файлы не перезаписывали друг друга
+    // Рандомизатор имен файлов
     const filename = `img_${Date.now()}_${Math.floor(Math.random() *10000)}.${ext}`;
     const filepath = path.join(savedImagesDir, filename);
 
@@ -115,6 +115,29 @@ async function autoSaveImage(imageUrl, prompt, params) {
 
     return filename;
 }
+
+// ПРИЕМ И СОХРАНЕНИЕ КАСТОМНОГО GIF-ЛОАДЕРА НА СЕРВЕРЕ
+app.post('/api/upload-loader', upload.single('loaderGif'), (req, res) => {
+    if (!req.file) {
+        logger('warn', 'Запрос на загрузку GIF отклонен: файл отсутствует');
+        return res.status(400).json({ error: 'Пожалуйста, прикрепите файл GIF.' });
+    }
+
+    const publicDir = path.join(__dirname, 'public');
+    if (!fs.existsSync(publicDir)) {
+        fs.mkdirSync(publicDir, { recursive: true });
+    }
+
+    const targetPath = path.join(publicDir, 'custom_loader.gif');
+    try {
+        fs.renameSync(req.file.path, targetPath);
+        logger('success', 'Кастомный GIF-лоадер успешно сохранен на сервере');
+        res.json({ success: true, url: '/custom_loader.gif' });
+    } catch (err) {
+        logger('error', 'Ошибка при переносе кастомного GIF-лоадера:', err.message);
+        res.status(500).json({ error: 'Не удалось сохранить файл на диске сервера: ' + err.message });
+    }
+});
 
 app.get('/api/gallery', (req, res) => {
     const manifestPath = path.join(savedImagesDir, 'manifest.json');
@@ -154,7 +177,8 @@ app.post('/api/generate', async (req, res) => {
             response_format: 'url',
             background: background || 'auto',
             moderation: moderation || 'auto',
-            n: parseInt(n) || 1
+            n: parseInt(n) || 1,
+            isEditMode: false // <--- ЯВНОЕ УКАЗАНИЕ РЕЖИМА ГЕНЕРАЦИИ ДЛЯ СОХРАНЕНИЯ ПАРАМЕТРОВ
         };
 
         logger('info', `Запуск генерации через OpenAI SDK...`);
@@ -165,7 +189,6 @@ app.post('/api/generate', async (req, res) => {
             throw new Error(`Прокси вернул ошибку: ${apiErrorMsg}`);
         }
 
-        // Автоматически скачиваем и сохраняем каждое изображение в галерею
         const normalizedData = [];
         for (const item of response.data) {
             const rawUrl = item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url;
@@ -174,7 +197,7 @@ app.post('/api/generate', async (req, res) => {
                 normalizedData.push({ url: `/saved_images/${filename}` });
             } catch (saveErr) {
                 logger('error', 'Ошибка автосохранения сгенерированного изображения', { error: saveErr.message });
-                normalizedData.push({ url: rawUrl }); // fallback в случае сбоя автосохранения
+                normalizedData.push({ url: rawUrl });
             }
         }
 
@@ -269,7 +292,6 @@ app.post('/api/edit', upload.fields([
 
         cleanupUploadedFiles();
 
-        // Формируем payload (с поддержкой переданного качества quality)
         const editPayload = {
             model: 'gpt-image-2',
             prompt: prompt,
@@ -277,7 +299,8 @@ app.post('/api/edit', upload.fields([
             size: size || 'auto',
             quality: quality || 'auto',
             moderation: moderation || 'auto',
-            n: parseInt(n) || 1
+            n: parseInt(n) || 1,
+            isEditMode: true // <--- ЯВНОЕ УКАЗАНИЕ РЕЖИМА РЕДАКТИРОВАНИЯ ДЛЯ СОХРАНЕНИЯ ПАРАМЕТРОВ
         };
 
         logger('info', `Отправка запроса на редактирование через прямой Fetch...`);
@@ -290,9 +313,24 @@ app.post('/api/edit', upload.fields([
             body: JSON.stringify(editPayload)
         });
 
+        // ИСПРАВЛЕНА ОШИБКА ОТОБРАЖЕНИЯ ПУСТЫХ СКОБОК {}: Улучшен вывод ошибок прокси
         if (!response.ok) {
-            const errJson = await response.json().catch(() => ({}));
-            const apiErrorMsg = errJson?.error?.message || errJson?.error || JSON.stringify(errJson) || `Ошибка HTTP: ${response.status}`;
+            let apiErrorMsg = '';
+            try {
+                const responseText = await response.text();
+                try {
+                    const errJson = JSON.parse(responseText);
+                    apiErrorMsg = errJson?.error?.message || errJson?.error || JSON.stringify(errJson);
+                } catch (jsonErr) {
+                    apiErrorMsg = responseText || `Ошибка HTTP: ${response.status}`;
+                }
+            } catch (textErr) {
+                apiErrorMsg = `Ошибка связи с прокси: HTTP статус ${response.status}`;
+            }
+
+            if (!apiErrorMsg || apiErrorMsg === '{}' || apiErrorMsg.trim() === '') {
+                apiErrorMsg = `Ошибка HTTP статус ${response.status}`;
+            }
             throw new Error(`Прокси вернул ошибку: ${apiErrorMsg}`);
         }
 
@@ -302,7 +340,6 @@ app.post('/api/edit', upload.fields([
             throw new Error('Прокси вернул пустой или некорректный ответ');
         }
 
-        // Автоматически скачиваем и сохраняем каждое отредактированное изображение в галерею
         const normalizedData = [];
         for (const item of resJson.data) {
             const rawUrl = item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url;
@@ -325,7 +362,7 @@ app.post('/api/edit', upload.fields([
     }
 });
 
-// СОХРАНЕНИЕ (ручное сохранение оставлено для совместимости)
+// СОХРАНЕНИЕ
 app.post('/api/save-image', async (req, res) => {
     const { imageUrl, prompt, params } = req.body;
 

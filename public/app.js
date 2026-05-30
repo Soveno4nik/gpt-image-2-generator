@@ -16,6 +16,18 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('proxy-url').value = localStorage.getItem('proxy_url') || '';
     document.getElementById('api-key').value = localStorage.getItem('api_key') || '';
 
+    // Инициализация лоадеров
+    const mode = localStorage.getItem('loader_type') || 'url';
+    if (mode === 'file') {
+        document.getElementById('loader-mode-file').checked = true;
+    } else {
+        document.getElementById('loader-mode-url').checked = true;
+    }
+    document.getElementById('loader-url').value = localStorage.getItem('loader_url') || 'https://media1.tenor.com/m/-YlzaY7PXb4AAAAd/among-us-amogus.gif';
+
+    toggleLoaderInputs();
+    updateLoaderGif();
+
     loadGallery();
 
     document.getElementById('param-size').addEventListener('change', (e) => {
@@ -26,7 +38,100 @@ document.addEventListener('DOMContentLoaded', () => {
             container.classList.add('hidden');
         }
     });
+
+    // ИСПРАВЛЕН ВЫВОД ПОРЯДКА ФАЙЛОВ: Слушатель изменения файлов в Image-to-Image
+    document.getElementById('edit-image').addEventListener('change', (e) => {
+        const display = document.getElementById('local-files-display');
+        const listContainer = document.getElementById('local-files-list');
+        const files = e.target.files;
+
+        if (files.length === 0) {
+            display.classList.add('hidden');
+            listContainer.innerHTML = '';
+            return;
+        }
+
+        display.classList.remove('hidden');
+        listContainer.innerHTML = '';
+
+        // Выводим файлы строго по их нумерованному индексу в порядке выбора
+        Array.from(files).forEach((file, index) => {
+            const item = document.createElement('div');
+            item.className = 'flex items-center justify-between p-1 bg-zinc-800/40 border border-zinc-700/30 rounded px-2 font-semibold text-[11px]';
+            item.innerHTML = `
+                <span class="truncate pr-2 text-zinc-300">
+                    <span class="font-mono text-indigo-400 font-bold mr-1.5">[#${index + 1}]</span>${file.name}
+                </span>
+                <span class="text-[9px] text-gray-500 font-mono shrink-0">${(file.size / 1024).toFixed(1)} KB</span>
+            `;
+            listContainer.appendChild(item);
+        });
+    });
 });
+
+// Управление отображением инпутов лоадеров в модальном окне настроек
+function toggleLoaderInputs() {
+    const mode = document.querySelector('input[name="loader-mode"]:checked').value;
+    const urlContainer = document.getElementById('loader-url-container');
+    const fileContainer = document.getElementById('loader-file-container');
+    if (mode === 'file') {
+        urlContainer.classList.add('hidden');
+        fileContainer.classList.remove('hidden');
+    } else {
+        urlContainer.classList.remove('hidden');
+        fileContainer.classList.add('hidden');
+    }
+}
+
+// Сброс ссылки на стандартного космонавта Among Us
+function resetLoaderUrl() {
+    document.getElementById('loader-url').value = 'https://media1.tenor.com/m/-YlzaY7PXb4AAAAd/among-us-amogus.gif';
+    showToast('Ссылка сброшена на стандартную гифку!', 'info');
+}
+
+// Загрузка локального GIF на сервер бэкенда
+async function uploadCustomLoader() {
+    const fileInput = document.getElementById('loader-file');
+    if (fileInput.files.length === 0) {
+        showToast('Пожалуйста, сначала выберите файл GIF на вашем компьютере.', 'error');
+        return;
+    }
+    const file = fileInput.files[0];
+    const formData = new FormData();
+    formData.append('loaderGif', file);
+
+    try {
+        const res = await fetch('/api/upload-loader', {
+            method: 'POST',
+            body: formData
+        });
+        await handleResponse(res);
+        showToast('Анимация GIF успешно загружена на сервер!', 'success');
+
+        // Переключаем настройки в режим "Файл"
+        localStorage.setItem('loader_type', 'file');
+        document.getElementById('loader-mode-file').checked = true;
+        toggleLoaderInputs();
+        updateLoaderGif();
+    } catch (err) {
+        showToast('Ошибка при загрузке GIF: ' + err.message, 'error');
+    }
+}
+
+// Обновление гифки лоадера с кэш-бастером (t=...) для моментального применения
+function updateLoaderGif() {
+    const loaderGif = document.getElementById('loader-gif');
+    if (!loaderGif) return;
+
+    const mode = localStorage.getItem('loader_type') || 'url';
+    const url = localStorage.getItem('loader_url') || 'https://media1.tenor.com/m/-YlzaY7PXb4AAAAd/among-us-amogus.gif';
+
+    if (mode === 'file') {
+        loaderGif.src = '/custom_loader.gif?t=' + Date.now();
+    } else {
+        loaderGif.src = url;
+    }
+}
 
 // Система Lightbox (Открытие изображения во весь экран)
 function openLightbox(url) {
@@ -128,8 +233,20 @@ function saveSettings() {
     const key = document.getElementById('api-key').value;
     localStorage.setItem('proxy_url', proxy);
     localStorage.setItem('api_key', key);
+
+    // Сохранение настроек лоадера
+    const loaderMode = document.querySelector('input[name="loader-mode"]:checked').value;
+    const loaderUrl = document.getElementById('loader-url').value.trim();
+
+    localStorage.setItem('loader_type', loaderMode);
+    if (loaderUrl) {
+        localStorage.setItem('loader_url', loaderUrl);
+    }
+
+    updateLoaderGif();
+
     toggleSettings();
-    showToast('Настройки подключения успешно сохранены!', 'success');
+    showToast('Настройки подключения и лоадера успешно сохранены!', 'success');
 }
 
 function getSettingsHeaders() {
@@ -291,7 +408,7 @@ async function generateImage() {
 
         displayResults(urls, prompt);
 
-        // Автоматически обновляем вкладку галереи новыми генерациями
+        // Автоматически обновляем вкладку галереи
         loadGallery();
         showToast('Изображение успешно создано и сохранено в галерею!', 'success');
     } catch (err) {
@@ -306,7 +423,7 @@ async function generateImage() {
     }
 }
 
-// РЕДАКТИРОВАНИЕ (Edit с поддержкой выбора качества)
+// РЕДАКТИРОВАНИЕ (Edit)
 async function editImage() {
     const prompt = document.getElementById('edit-prompt').value;
     let size = document.getElementById('param-size').value;
@@ -315,7 +432,7 @@ async function editImage() {
     }
     const moderation = document.getElementById('param-moderation').value;
     const n = document.getElementById('param-n').value;
-    const quality = document.getElementById('edit-param-quality').value; // Чтение качества
+    const quality = document.getElementById('edit-param-quality').value;
 
     const imageInput = document.getElementById('edit-image');
 
@@ -346,7 +463,7 @@ async function editImage() {
     lastRequestParams = {
         prompt,
         size,
-        quality, // Запоминаем качество
+        quality,
         moderation,
         n: parseInt(n),
         isEditMode: true
@@ -355,7 +472,7 @@ async function editImage() {
     const formData = new FormData();
     formData.append('prompt', prompt);
     formData.append('size', size);
-    formData.append('quality', quality); // Отправляем качество
+    formData.append('quality', quality);
     formData.append('moderation', moderation);
     formData.append('n', n);
 
@@ -398,7 +515,6 @@ async function editImage() {
 }
 
 // Отображение сетки результатов
-// Кнопка сохранения заменена на инфо-бейдж «В галерее», так как файлы сохраняются автоматически
 function displayResults(urls, prompt) {
     const grid = document.getElementById('result-images-grid');
     grid.innerHTML = '';
@@ -452,7 +568,7 @@ function displayResults(urls, prompt) {
     document.getElementById('result-container').classList.remove('hidden');
 }
 
-// Ручное сохранение конкретного изображения (оставлено для совместимости)
+// Ручное сохранение конкретного изображения
 async function saveSpecificImage(url, prompt, btnElement) {
     btnElement.disabled = true;
     const originalHTML = btnElement.innerHTML;
@@ -545,6 +661,7 @@ function loadGallery() {
 }
 
 // Восстановление параметров генерации на основе кэшированной картинки
+// ИСПРАВЛЕНО ОПРЕДЕЛЕНИЕ РЕЖИМА: isEditMode восстанавливается без ошибок
 function restoreParams(filename) {
     const item = galleryManifest.find(i => i.filename === filename);
     if (!item) return;
@@ -556,7 +673,7 @@ function restoreParams(filename) {
         document.getElementById('edit-prompt').value = params.prompt || '';
         if (params.moderation) document.getElementById('param-moderation').value = params.moderation;
         if (params.n) document.getElementById('param-n').value = params.n;
-        if (params.quality) document.getElementById('edit-param-quality').value = params.quality; // Восстановление качества редактирования
+        if (params.quality) document.getElementById('edit-param-quality').value = params.quality;
 
         const sizeVal = params.size || 'auto';
         handleSizeRestore(sizeVal);
