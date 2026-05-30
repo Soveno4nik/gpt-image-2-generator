@@ -94,21 +94,37 @@ async function autoSaveImage(imageUrl, prompt, params) {
     let buffer;
     let ext = 'png';
 
+    // Дефолтное расширение на основе выбранного формата пользователя
+    if (params && params.output_format) {
+        ext = params.output_format === 'jpeg' ? 'jpg' : params.output_format;
+    }
+
     if (imageUrl.startsWith('data:image')) {
         const matches = imageUrl.match(/^data:image\/([A-Za-z+]+);base64,(.+)$/);
         if (!matches || matches.length !== 3) {
             throw new Error('Некорректный формат Data URI');
         }
         ext = matches[1];
+        if (ext === 'jpeg') ext = 'jpg'; // Конвертируем jpeg в более привычное расширение jpg
         buffer = Buffer.from(matches[2], 'base64');
     } else {
         const response = await fetch(imageUrl);
         if (!response.ok) throw new Error(`Не удалось скачать картинку. Статус HTTP: ${response.status}`);
         const arrayBuffer = await response.arrayBuffer();
         buffer = Buffer.from(arrayBuffer);
-        if (imageUrl.includes('.png')) ext = 'png';
-        else if (imageUrl.includes('.webp')) ext = 'webp';
-        else if (imageUrl.includes('.jpg') || imageUrl.includes('.jpeg')) ext = 'jpg';
+
+        // Интеллектуальное определение формата из Content-Type заголовка ответа
+        const contentType = response.headers.get('content-type');
+        if (contentType) {
+            if (contentType.includes('image/webp')) ext = 'webp';
+            else if (contentType.includes('image/jpeg')) ext = 'jpg';
+            else if (contentType.includes('image/png')) ext = 'png';
+        } else {
+            // Резервное определение по подстрокам в URL
+            if (imageUrl.includes('.png')) ext = 'png';
+            else if (imageUrl.includes('.webp')) ext = 'webp';
+            else if (imageUrl.includes('.jpg') || imageUrl.includes('.jpeg')) ext = 'jpg';
+        }
     }
 
     const filename = `img_${Date.now()}_${Math.floor(Math.random() * 10000)}.${ext}`;
@@ -133,11 +149,7 @@ async function autoSaveImage(imageUrl, prompt, params) {
     return filename;
 }
 
-// ==========================================
 // API ЭНДПОИНТЫ ДЛЯ ГАЛЕРЕИ ГИФОК-ЛОАДЕРОВ
-// ==========================================
-
-// Получить список гифок
 app.get('/api/loaders', (req, res) => {
     try {
         if (fs.existsSync(loadersManifestPath)) {
@@ -151,7 +163,6 @@ app.get('/api/loaders', (req, res) => {
     }
 });
 
-// Загрузить гифку на сервер файлом
 app.post('/api/loaders/upload', upload.single('loaderGif'), (req, res) => {
     if (!req.file) {
         logger('warn', 'Загрузка гифки-файла: файл отсутствует');
@@ -189,7 +200,6 @@ app.post('/api/loaders/upload', upload.single('loaderGif'), (req, res) => {
     }
 });
 
-// Добавить гифку по ссылке (URL)
 app.post('/api/loaders/add-url', (req, res) => {
     const { name, url } = req.body;
     if (!url) {
@@ -220,7 +230,6 @@ app.post('/api/loaders/add-url', (req, res) => {
     }
 });
 
-// Удалить гифку
 app.delete('/api/loaders/:id', (req, res) => {
     const { id } = req.params;
 
@@ -239,7 +248,6 @@ app.delete('/api/loaders/:id', (req, res) => {
             return res.status(404).json({ error: 'Гифка-лоадер не найдена.' });
         }
 
-        // Если это файл, удаляем его физически
         if (loaderToDelete.type === 'file' && loaderToDelete.filename) {
             const filepath = path.join(loadersDir, loaderToDelete.filename);
             if (fs.existsSync(filepath)) {
@@ -257,11 +265,6 @@ app.delete('/api/loaders/:id', (req, res) => {
         res.status(500).json({ error: 'Не удалось удалить гифку: ' + err.message });
     }
 });
-
-
-// ==========================================
-// СТАНДАРТНЫЙ ФУНКЦИОНАЛ ИЗОБРАЖЕНИЙ
-// ==========================================
 
 app.get('/api/gallery', (req, res) => {
     const manifestPath = path.join(savedImagesDir, 'manifest.json');
@@ -293,31 +296,46 @@ app.post('/api/generate', async (req, res) => {
             baseURL: apiBase
         });
 
-        const payload = {
+        // ИСПРАВЛЕНЫ ПАРАМЕТРЫ: Очистили пейлоад к OpenAI API от служебных isEditMode и response_format, прокинули output_format
+        const apiPayload = {
             model: 'gpt-image-2',
             prompt: prompt,
             size: size || '1024x1024',
             quality: quality || 'auto',
-            response_format: 'url',
+            output_format: output_format || 'png',
             background: background || 'auto',
             moderation: moderation || 'auto',
-            n: parseInt(n) || 1,
-            isEditMode: false
+            n: parseInt(n) || 1
         };
 
         logger('info', `Запуск генерации через OpenAI SDK...`);
-        const response = await openai.images.generate(payload);
+        const response = await openai.images.generate(apiPayload);
 
         if (!response || !response.data) {
             const apiErrorMsg = response?.error?.message || response?.error || JSON.stringify(response) || 'Пустой ответ прокси';
             throw new Error(`Прокси вернул ошибку: ${apiErrorMsg}`);
         }
 
+        // Локальное сохранение параметров истории (с тихим isEditMode для последующего восстановления в UI)
+        const saveParams = {
+            prompt,
+            size,
+            quality,
+            output_format: output_format || 'png',
+            background,
+            moderation,
+            n: parseInt(n),
+            isEditMode: false
+        };
+
         const normalizedData = [];
         for (const item of response.data) {
-            const rawUrl = item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url;
+            // ИСПРАВЛЕНО: Форматируем data URI динамически под выбранный output_format
+            const rawUrl = item.b64_json
+                ? `data:image/${output_format || 'png'};base64,${item.b64_json}`
+                : item.url;
             try {
-                const filename = await autoSaveImage(rawUrl, prompt, payload);
+                const filename = await autoSaveImage(rawUrl, prompt, saveParams);
                 normalizedData.push({ url: `/saved_images/${filename}` });
             } catch (saveErr) {
                 logger('error', 'Ошибка автосохранения сгенерированного изображения', { error: saveErr.message });
@@ -347,7 +365,7 @@ app.post('/api/generate', async (req, res) => {
 app.post('/api/edit', upload.fields([
     { name: 'image', maxCount: 16 }
 ]), async (req, res) => {
-    const { prompt, size, quality, moderation, savedImageRefs, n } = req.body;
+    const { prompt, size, quality, moderation, output_format, savedImageRefs, n } = req.body;
     const { token, apiBase } = getAuthHeaders(req);
 
     const uploadedImages = req.files['image'] || [];
@@ -363,7 +381,7 @@ app.post('/api/edit', upload.fields([
 
     logger('info', 'Запрос на редактирование (Edit Mode)', {
         prompt: prompt ? `${prompt.substring(0, 60)}...` : null,
-        size, quality, moderation, uploadedCount: uploadedImages.length, galleryCount: parsedSavedRefs.length, n
+        size, quality, moderation, output_format, uploadedCount: uploadedImages.length, galleryCount: parsedSavedRefs.length, n
     });
 
     if (!token) {
@@ -391,7 +409,6 @@ app.post('/api/edit', upload.fields([
     try {
         const imageObjects = [];
 
-        // Обработка загруженных файлов
         for (const file of uploadedImages) {
             const fileMime = file.mimetype || getMimeType(file.originalname);
             const base64Data = fs.readFileSync(file.path, { encoding: 'base64' });
@@ -401,7 +418,6 @@ app.post('/api/edit', upload.fields([
             logger('info', `Подготовлен загруженный референс в Base64: ${file.originalname}`);
         }
 
-        // Обработка файлов из галереи
         for (const filename of parsedSavedRefs) {
             const localPath = path.join(savedImagesDir, filename);
             if (fs.existsSync(localPath)) {
@@ -416,15 +432,16 @@ app.post('/api/edit', upload.fields([
 
         cleanupUploadedFiles();
 
-        const editPayload = {
+        // ИСПРАВЛЕНЫ ПАРАМЕТРЫ: Очищен пейлоад к API от isEditMode, добавлен реальный output_format
+        const apiPayload = {
             model: 'gpt-image-2',
             prompt: prompt,
             images: imageObjects,
             size: size || 'auto',
             quality: quality || 'auto',
             moderation: moderation || 'auto',
-            n: parseInt(n) || 1,
-            isEditMode: true
+            output_format: output_format || 'png',
+            n: parseInt(n) || 1
         };
 
         logger('info', `Отправка запроса на редактирование через прямой Fetch...`);
@@ -434,10 +451,10 @@ app.post('/api/edit', upload.fields([
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`
             },
-            body: JSON.stringify(editPayload)
+            body: JSON.stringify(apiPayload)
         });
 
-        // УЛУЧШЕННЫЙ ВЫВОД ОШИБОК ПРОКСИ, идентичный Text-To-Image
+        // Улучшенный вывод ошибок прокси
         if (!response.ok) {
             let apiErrorMsg = '';
             let status = response.status || 400;
@@ -469,11 +486,25 @@ app.post('/api/edit', upload.fields([
             throw new Error(apiErrorMsg);
         }
 
+        // Параметры истории
+        const saveParams = {
+            prompt,
+            size,
+            quality,
+            moderation,
+            output_format: output_format || 'png',
+            n: parseInt(n),
+            isEditMode: true
+        };
+
         const normalizedData = [];
         for (const item of resJson.data) {
-            const rawUrl = item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url;
+            // ИСПРАВЛЕНО: Форматируем data URI динамически под выбранный output_format
+            const rawUrl = item.b64_json
+                ? `data:image/${output_format || 'png'};base64,${item.b64_json}`
+                : item.url;
             try {
-                const filename = await autoSaveImage(rawUrl, prompt, editPayload);
+                const filename = await autoSaveImage(rawUrl, prompt, saveParams);
                 normalizedData.push({ url: `/saved_images/${filename}` });
             } catch (saveErr) {
                 logger('error', 'Ошибка автосохранения отредактированного изображения', { error: saveErr.message });

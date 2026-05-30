@@ -286,7 +286,7 @@ function clearLocalFiles() {
     const listContainer = document.getElementById('local-files-list');
     if (display) display.classList.add('hidden');
     if (listContainer) listContainer.innerHTML = '';
-    showToast('Выбранные локальные файлы успешно очищены.', 'info');
+    showToast('Список выбранных локальных файлов очищен.', 'info');
 }
 
 // Тихая очистка файлов при переходе из галереи
@@ -597,6 +597,7 @@ async function editImage() {
     const moderation = document.getElementById('param-moderation').value;
     const n = document.getElementById('param-n').value;
     const quality = document.getElementById('edit-param-quality').value;
+    const format = document.getElementById('edit-param-format').value; // Чтение формата вывода для редактирования
 
     const imageInput = document.getElementById('edit-image');
 
@@ -628,6 +629,7 @@ async function editImage() {
         prompt,
         size,
         quality,
+        output_format: format,
         moderation,
         n: parseInt(n),
         isEditMode: true
@@ -639,6 +641,7 @@ async function editImage() {
     formData.append('quality', quality);
     formData.append('moderation', moderation);
     formData.append('n', n);
+    formData.append('output_format', format); // Передача формата в бэкенд роута редактирования
 
     for (let i = 0; i < imageInput.files.length; i++) {
         formData.append('image', imageInput.files[i]);
@@ -670,7 +673,7 @@ async function editImage() {
         if (err.name === 'AbortError') {
             document.getElementById('no-result').classList.remove('hidden');
         } else {
-            // Ошибки при редактировании теперь выводятся точно так же, как при генерации!
+            // Ошибки редактирования теперь выводятся идентично генерации
             showLocalError(err.message);
         }
     } finally {
@@ -690,9 +693,12 @@ function displayResults(urls, prompt) {
         grid.className = 'grid grid-cols-1 md:grid-cols-2 gap-4 w-full';
     }
 
-    urls.forEach((url, index) => {
+        urls.forEach((url, index) => {
         const item = document.createElement('div');
         item.className = 'card p-3 rounded-lg flex flex-col gap-3 border border-[#30363d] bg-[#161b22] relative group';
+
+        // ИСПРАВЛЕНО: Вычисляем красивое и правильное имя под формат файла
+        const downloadName = getDownloadFilename(url, index, 'png');
 
         item.innerHTML = `
             <div class="relative rounded overflow-hidden max-h-[350px] bg-black flex justify-center items-center group/img cursor-zoom-in">
@@ -710,7 +716,8 @@ function displayResults(urls, prompt) {
                     <div class="bg-emerald-950/40 border border-emerald-800 text-emerald-400 px-2.5 py-1 rounded font-bold flex items-center gap-1 cursor-default select-none" title="Изображение автоматически сохранено в галерею">
                         <i class="fa-solid fa-cloud-arrow-down"></i> В галерее
                     </div>
-                    <a href="${url}" target="_blank" download="gpt_image_${index + 1}.png" class="bg-zinc-800 hover:bg-zinc-700 text-white px-2.5 py-1 rounded font-bold transition flex items-center gap-1">
+                    <!-- ИСПРАВЛЕНО: Атрибут download теперь динамический и уникальный -->
+                    <a href="${url}" target="_blank" download="${downloadName}" class="bg-zinc-800 hover:bg-zinc-700 text-white px-2.5 py-1 rounded font-bold transition flex items-center gap-1">
                         <i class="fa-solid fa-download"></i> Скачать
                     </a>
                 </div>
@@ -897,6 +904,7 @@ function restoreParams(filename) {
         if (params.moderation) document.getElementById('param-moderation').value = params.moderation;
         if (params.n) document.getElementById('param-n').value = params.n;
         if (params.quality) document.getElementById('edit-param-quality').value = params.quality;
+        if (params.output_format) document.getElementById('edit-param-format').value = params.output_format; // Восстанавливаем формат редактирования
 
         const sizeVal = params.size || 'auto';
         handleSizeRestore(sizeVal);
@@ -1005,4 +1013,30 @@ async function deleteGalleryImage(filename) {
     } catch (err) {
         showToast('Ошибка при удалении:\n' + err.message, 'error');
     }
+}
+
+// Умный генератор имен для скачивания без конфликтов и с верными расширениями
+function getDownloadFilename(url, index, defaultExt = 'png') {
+    // Если это base64-строка
+    if (url.startsWith('data:')) {
+        const matches = url.match(/^data:image\/([A-Za-z+]+);base64,/);
+        let ext = matches ? matches[1] : defaultExt;
+        if (ext === 'jpeg') ext = 'jpg';
+        return `gpt_image_${Date.now()}_${index + 1}.${ext}`;
+    }
+
+    // Если это локальная ссылка на сервере (например, /saved_images/img_17154564_45.webp)
+    try {
+        const urlObj = new URL(url, window.location.origin);
+        const pathname = urlObj.pathname;
+        const filename = pathname.substring(pathname.lastIndexOf('/') + 1);
+        if (filename && filename.includes('.')) {
+            return filename; // Возвращает уникальное имя с диска сервера
+        }
+    } catch (e) {
+        // Игнорируем ошибку парсинга и переходим к дефолту
+    }
+
+    // Дефолтный fallback генератор
+    return `gpt_image_${Date.now()}_${index + 1}.${defaultExt}`;
 }
